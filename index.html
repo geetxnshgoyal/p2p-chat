@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Campus Chat</title>
+<style>
+  :root{
+    --bg:#0b1220; --panel:#0f172a; --border:#1f2a44; --text:#dbeafe;
+    --accent:#60a5fa; --sys:#34d399; --me-bg:#2563eb; --me-text:#fff;
+    --other-bg:#1e293b; --other-text:#e5e7eb; --pill:#0b5ed7;
+    --mention:#fde047; --mention-text:#111827;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);font:14px/1.45 system-ui,Segoe UI,Roboto,Arial,sans-serif;height:100vh;display:flex}
+  #sidebar{width:260px;min-width:220px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column}
+  #main{flex:1;display:flex;flex-direction:column}
+  #phead{padding:10px;border-bottom:1px solid var(--border);font-weight:600}
+  #plist{flex:1;overflow:auto;padding:8px}
+  .user{display:flex;align-items:center;gap:8px;padding:6px;border-radius:8px;border:1px solid transparent}
+  .user:hover{background:#0b1220;border-color:var(--border)}
+  .dot{width:8px;height:8px;border-radius:50%;background:#22c55e}
+  .you{opacity:.9}
+  #log{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+  .msg{display:flex}
+  .bubble{max-width:72%;padding:10px 12px;border-radius:14px;word-wrap:break-word}
+  .sys{justify-content:center;color:var(--sys);font-style:italic}
+  .me{justify-content:flex-end}
+  .me .bubble{background:var(--me-bg);color:var(--me-text)}
+  .other{justify-content:flex-start}
+  .other .bubble{background:var(--other-bg);color:var(--other-text)}
+  .tag{display:inline-block;margin-bottom:4px;padding:2px 8px;border-radius:999px;background:var(--pill);color:#fff;font-size:11px}
+  .mention-full{background:var(--mention)!important;color:var(--mention-text)!important}
+
+  /* Composer: minimalist long input */
+  #composer{
+    display:flex;
+    gap:8px;
+    padding:12px;
+    border-top:1px solid var(--border);
+    background:var(--panel);
+    align-items:center;
+  }
+  #text{
+    flex:1;
+    height:48px;
+    padding:0 14px;
+    font-size:15px;
+    line-height:1.3;
+    border-radius:20px;
+    border:1px solid var(--border);
+    background:#0b1220;
+    color:var(--text);
+  }
+  #send{
+    height:48px;
+    padding:0 22px;
+    font-size:15px;
+    border-radius:20px;
+    background:var(--accent);
+    color:#fff;
+    border:none;
+    cursor:pointer;
+  }
+  #text::placeholder{opacity:.8}
+
+  /* mention dropdown */
+  #mwrap{position:relative;flex:1}
+  #mbox{
+    position:absolute; left:10px; bottom:54px;
+    background:var(--panel); border:1px solid var(--border); border-radius:10px;
+    min-width:220px; max-height:200px; overflow:auto; box-shadow:0 10px 30px #0008; display:none; z-index:20;
+  }
+  .mitem{padding:8px 10px; cursor:pointer}
+  .mitem:hover, .mitem.active{background:#0b1220}
+
+  /* modal */
+  #modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center}
+  #modalCard{background:var(--panel);border:1px solid var(--border);padding:16px;border-radius:12px;width:min(420px,92vw)}
+  #modal h2{margin:0 0 10px 0}
+  #modal .row{display:flex;gap:8px}
+  /* force full-width composer input */
+#composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);background:var(--panel);align-items:center}
+#mwrap{position:relative;flex:1;display:flex;min-width:0}  /* allow child to grow */
+#text{
+  flex:1;
+  width:100%;
+  min-width:0;              /* critical for flex width */
+  height:48px;
+  padding:0 14px;
+  font-size:15px;
+  line-height:1.3;
+  border-radius:20px;
+  border:1px solid var(--border);
+  background:#0b1220;
+  color:var(--text);
+}
+#send{height:48px;padding:0 22px;font-size:15px;border-radius:20px;background:var(--accent);color:#fff;border:none;cursor:pointer}
+
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div id="phead">Participants</div>
+    <div id="plist" aria-label="participants list"></div>
+  </aside>
+
+  <section id="main">
+    <div id="log" aria-live="polite"></div>
+    <div id="composer">
+      <div id="mwrap">
+        <input id="text" placeholder="Type message & press Enter (use @name to mention)" maxlength="1000" />
+        <div id="mbox" role="listbox" aria-label="mention suggestions"></div>
+      </div>
+      <button id="send">Send</button>
+    </div>
+  </section>
+
+  <!-- name modal -->
+  <div id="modal">
+    <div id="modalCard">
+      <h2>Enter your name</h2>
+      <div class="row">
+        <input id="nameInput" placeholder="e.g. Geet" maxlength="32" style="flex:1">
+        <button id="joinBtn">Join</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  let nickname = "";
+  let members = [];
+  let mActive = -1;
+  let mStart = null;
+
+  const plist = document.getElementById('plist');
+  const logEl = document.getElementById('log');
+  const textEl = document.getElementById('text');
+  const sendEl = document.getElementById('send');
+  const modal = document.getElementById('modal');
+  const nameInput = document.getElementById('nameInput');
+  const joinBtn = document.getElementById('joinBtn');
+  const mbox = document.getElementById('mbox');
+
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/`);
+
+  function renderParticipants(arr){
+    const others = (arr || []).filter(n => n !== nickname).sort((a,b)=>a.localeCompare(b));
+    const ordered = nickname ? [nickname, ...others] : others;
+    members = ordered;
+    plist.innerHTML = "";
+    ordered.forEach(n=>{
+      const li = document.createElement('div'); li.className = 'user';
+      const dot = document.createElement('span'); dot.className='dot';
+      const name = document.createElement('span');
+      if (n === nickname) { name.textContent = `${n} (you)`; li.classList.add('you'); }
+      else { name.textContent = n; }
+      li.append(dot, name);
+      plist.appendChild(li);
+    });
+  }
+
+  function containsMentionForMe(text){
+    if (!nickname) return false;
+    const name = nickname.toLowerCase();
+    let i = 0;
+    while (i < text.length) {
+      const at = text.indexOf('@', i);
+      if (at === -1) return false;
+      if (at > 0 && /\S/.test(text[at-1])) { i = at+1; continue; }
+      let j = at + 1;
+      while (j < text.length && /[^\s.,!?;:(){}[\]"'<>]/.test(text[j])) j++;
+      if (text.slice(at+1, j).toLowerCase() === name) return true;
+      i = j;
+    }
+    return false;
+  }
+
+  function addMsg(type, text, from){
+    const row = document.createElement('div'); row.className = 'msg ' + type;
+    const box = document.createElement('div'); box.className = 'bubble';
+    if (from && type!=='me') {
+      const tag = document.createElement('span'); tag.className='tag'; tag.textContent = from;
+      box.appendChild(tag);
+    }
+    if (type!=='me' && containsMentionForMe(text)) box.classList.add('mention-full');
+    box.appendChild(document.createTextNode(text));
+    row.appendChild(box);
+    logEl.appendChild(row);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function sendHello(name){ ws.send(JSON.stringify({ type:'hello', nickname: name })); }
+
+  ws.addEventListener('message', ev=>{
+    const m = JSON.parse(ev.data);
+    if (m.type==='system') addMsg('sys', m.text);
+    else if (m.type==='chat') {
+      if (m.from === nickname) return;
+      addMsg('other', m.text, m.from);
+    } else if (m.type==='roster') {
+      renderParticipants(m.members || []);
+    }
+  });
+
+  ws.addEventListener('close', ()=> addMsg('sys','connection closed'));
+  ws.addEventListener('error', ()=> addMsg('sys','socket error'));
+
+  function sendChat(){
+    if (ws.readyState!==1) return;
+    const t = textEl.value.trim(); if(!t) return;
+    ws.send(JSON.stringify({ type:'chat', text:t }));
+    addMsg('me', t, 'me');
+    textEl.value=''; closeMention(); textEl.focus();
+  }
+
+  sendEl.onclick = sendChat;
+
+  textEl.addEventListener('keydown', e=>{
+    if (isDropdownOpen()) {
+      if (e.key==='ArrowDown'){ e.preventDefault(); moveMention(1); return; }
+      if (e.key==='ArrowUp'){ e.preventDefault(); moveMention(-1); return; }
+      if (e.key==='Enter' || e.key==='Tab'){ e.preventDefault(); pickMention(); return; }
+      if (e.key==='Escape'){ e.preventDefault(); closeMention(); return; }
+    }
+    if (e.key==='Enter'){ e.preventDefault(); sendChat(); }
+  });
+
+  textEl.addEventListener('input', onInputForMention);
+  textEl.addEventListener('click', onInputForMention);
+
+  function isDropdownOpen(){ return mbox.style.display === 'block'; }
+  function getMentionContext(){
+    const pos = textEl.selectionStart;
+    const s = textEl.value.slice(0,pos);
+    const at = s.lastIndexOf('@');
+    if (at === -1) return null;
+    if (at>0 && /\S/.test(s[at-1])) return null;
+    const partial = s.slice(at+1);
+    if (partial.length===0) return {start:at, q:""};
+    if (/\s/.test(partial)) return null;
+    return {start:at, q:partial};
+  }
+  function onInputForMention(){
+    const ctx = getMentionContext();
+    if (!ctx) { closeMention(); return; }
+    const q = ctx.q.toLowerCase();
+    const list = members.filter(n => n !== nickname && n.toLowerCase().startsWith(q)).slice(0,8);
+    if (list.length===0) { closeMention(); return; }
+    mStart = ctx.start; renderMentionBox(list);
+  }
+  function renderMentionBox(list){
+    mbox.innerHTML = "";
+    list.forEach((n,i)=>{
+      const div = document.createElement('div');
+      div.className = 'mitem' + (i===0?' active':'');
+      div.textContent = n;
+      div.onclick = ()=> insertMention(n);
+      mbox.appendChild(div);
+    });
+    mActive = 0;
+    mbox.style.display = 'block';
+  }
+  function moveMention(d){
+    const items = [...mbox.querySelectorAll('.mitem')];
+    if (!items.length) return;
+    items[mActive].classList.remove('active');
+    mActive = (mActive + d + items.length) % items.length;
+    items[mActive].classList.add('active');
+    items[mActive].scrollIntoView({block:'nearest'});
+  }
+  function pickMention(){
+    const items = [...mbox.querySelectorAll('.mitem')];
+    if (!items.length) return;
+    insertMention(items[mActive].textContent);
+  }
+  function insertMention(name){
+    if (mStart==null) return;
+    const pos = textEl.selectionStart;
+    const before = textEl.value.slice(0, mStart);
+    const after  = textEl.value.slice(pos);
+    textEl.value = before + '@' + name + ' ' + after;
+    const caret = (before + '@' + name + ' ').length;
+    textEl.setSelectionRange(caret, caret);
+    closeMention();
+  }
+  function closeMention(){ mbox.style.display='none'; mbox.innerHTML=""; mActive=-1; mStart=null; }
+
+  function submitName(){
+    const n = nameInput.value.trim().slice(0,32);
+    if (!n) return;
+    nickname = n;
+    modal.style.display = 'none';
+    if (ws.readyState===1) sendHello(nickname);
+    else ws.addEventListener('open', ()=> sendHello(nickname), { once:true });
+  }
+  joinBtn.onclick = submitName;
+  nameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') submitName(); });
+</script>
+</body>
+</html>
