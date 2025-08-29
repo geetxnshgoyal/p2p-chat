@@ -32,71 +32,26 @@
   .tag{display:inline-block;margin-bottom:4px;padding:2px 8px;border-radius:999px;background:var(--pill);color:#fff;font-size:11px}
   .mention-full{background:var(--mention)!important;color:var(--mention-text)!important}
 
-  /* Composer: minimalist long input */
-  #composer{
-    display:flex;
-    gap:8px;
-    padding:12px;
-    border-top:1px solid var(--border);
-    background:var(--panel);
-    align-items:center;
-  }
-  #text{
-    flex:1;
-    height:48px;
-    padding:0 14px;
-    font-size:15px;
-    line-height:1.3;
-    border-radius:20px;
-    border:1px solid var(--border);
-    background:#0b1220;
-    color:var(--text);
-  }
-  #send{
-    height:48px;
-    padding:0 22px;
-    font-size:15px;
-    border-radius:20px;
-    background:var(--accent);
-    color:#fff;
-    border:none;
-    cursor:pointer;
-  }
+  /* composer */
+  #composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);background:var(--panel);align-items:center}
+  #mwrap{position:relative;flex:1;display:flex;min-width:0}
+  #text{flex:1;width:100%;min-width:0;height:48px;padding:0 14px;font-size:15px;line-height:1.3;border-radius:20px;border:1px solid var(--border);background:#0b1220;color:var(--text)}
+  #send{height:48px;padding:0 22px;font-size:15px;border-radius:20px;background:var(--accent);color:#fff;border:none;cursor:pointer}
   #text::placeholder{opacity:.8}
 
   /* mention dropdown */
-  #mwrap{position:relative;flex:1}
-  #mbox{
-    position:absolute; left:10px; bottom:54px;
-    background:var(--panel); border:1px solid var(--border); border-radius:10px;
-    min-width:220px; max-height:200px; overflow:auto; box-shadow:0 10px 30px #0008; display:none; z-index:20;
-  }
-  .mitem{padding:8px 10px; cursor:pointer}
-  .mitem:hover, .mitem.active{background:#0b1220}
+  #mbox{position:absolute;left:10px;bottom:54px;background:var(--panel);border:1px solid var(--border);border-radius:10px;min-width:220px;max-height:200px;overflow:auto;box-shadow:0 10px 30px #0008;display:none;z-index:20}
+  .mitem{padding:8px 10px;cursor:pointer}
+  .mitem:hover,.mitem.active{background:#0b1220}
 
   /* modal */
   #modal{position:fixed;inset:0;background:#0008;display:flex;align-items:center;justify-content:center}
-  #modalCard{background:var(--panel);border:1px solid var(--border);padding:16px;border-radius:12px;width:min(420px,92vw)}
+  #modalCard{background:var(--panel);border:1px solid var(--border);padding:16px;border-radius:12px;width:min(460px,92vw)}
   #modal h2{margin:0 0 10px 0}
-  #modal .row{display:flex;gap:8px}
-  /* force full-width composer input */
-#composer{display:flex;gap:8px;padding:12px;border-top:1px solid var(--border);background:var(--panel);align-items:center}
-#mwrap{position:relative;flex:1;display:flex;min-width:0}  /* allow child to grow */
-#text{
-  flex:1;
-  width:100%;
-  min-width:0;              /* critical for flex width */
-  height:48px;
-  padding:0 14px;
-  font-size:15px;
-  line-height:1.3;
-  border-radius:20px;
-  border:1px solid var(--border);
-  background:#0b1220;
-  color:var(--text);
-}
-#send{height:48px;padding:0 22px;font-size:15px;border-radius:20px;background:var(--accent);color:#fff;border:none;cursor:pointer}
-
+  .row{display:flex;gap:8px;margin-top:8px}
+  .row input{flex:1;padding:10px;border:1px solid var(--border);border-radius:10px;background:#0b1220;color:var(--text)}
+  .row button{padding:10px 16px;border:none;border-radius:10px;background:var(--accent);color:#fff;cursor:pointer}
+  .hint{opacity:.8;font-size:12px;margin-top:6px}
 </style>
 </head>
 <body>
@@ -116,22 +71,29 @@
     </div>
   </section>
 
-  <!-- name modal -->
+  <!-- join modal -->
   <div id="modal">
     <div id="modalCard">
-      <h2>Enter your name</h2>
+      <h2>Join</h2>
       <div class="row">
-        <input id="nameInput" placeholder="e.g. Geet" maxlength="32" style="flex:1">
-        <button id="joinBtn">Join</button>
+        <input id="nameInput" placeholder="Your name" maxlength="32">
+      </div>
+      <div class="row">
+        <input id="groupInput" placeholder="Group code (optional)" maxlength="32">
+      </div>
+      <div class="hint">No code → auto-group by Wi-Fi/IP (may be coarse over tunnels). Same code → private segment across networks.</div>
+      <div class="row">
+        <button id="joinBtn">Enter</button>
       </div>
     </div>
   </div>
 
 <script>
   let nickname = "";
+  let groupCode = "";
   let members = [];
-  let mActive = -1;
-  let mStart = null;
+  let mActive = -1, mStart = null;
+  let ws = null;
 
   const plist = document.getElementById('plist');
   const logEl = document.getElementById('log');
@@ -139,11 +101,29 @@
   const sendEl = document.getElementById('send');
   const modal = document.getElementById('modal');
   const nameInput = document.getElementById('nameInput');
+  const groupInput = document.getElementById('groupInput');
   const joinBtn = document.getElementById('joinBtn');
   const mbox = document.getElementById('mbox');
 
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/`);
+  function openSocket(){
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const url = new URL(location.href);
+    url.protocol = proto + ":";
+    url.pathname = "/";                       // clean root
+    if (groupCode) url.searchParams.set("g", groupCode);
+    else url.searchParams.delete("g");
+    ws = new WebSocket(url.toString());
+
+    ws.addEventListener('message', ev=>{
+      const m = JSON.parse(ev.data);
+      if (m.type==='system') addMsg('sys', m.text);
+      else if (m.type==='chat') { if (m.from !== nickname) addMsg('other', m.text, m.from); }
+      else if (m.type==='roster') renderParticipants(m.members || []);
+    });
+    ws.addEventListener('close', ()=> addMsg('sys','connection closed'));
+    ws.addEventListener('error', ()=> addMsg('sys','socket error'));
+    ws.addEventListener('open', ()=> ws.send(JSON.stringify({ type:'hello', nickname })), { once:true });
+  }
 
   function renderParticipants(arr){
     const others = (arr || []).filter(n => n !== nickname).sort((a,b)=>a.localeCompare(b));
@@ -151,11 +131,11 @@
     members = ordered;
     plist.innerHTML = "";
     ordered.forEach(n=>{
-      const li = document.createElement('div'); li.className = 'user';
+      const li = document.createElement('div'); li.className='user';
       const dot = document.createElement('span'); dot.className='dot';
       const name = document.createElement('span');
-      if (n === nickname) { name.textContent = `${n} (you)`; li.classList.add('you'); }
-      else { name.textContent = n; }
+      name.textContent = n === nickname ? `${n} (you)` : n;
+      if (n === nickname) li.classList.add('you');
       li.append(dot, name);
       plist.appendChild(li);
     });
@@ -164,59 +144,33 @@
   function containsMentionForMe(text){
     if (!nickname) return false;
     const name = nickname.toLowerCase();
-    let i = 0;
-    while (i < text.length) {
-      const at = text.indexOf('@', i);
-      if (at === -1) return false;
-      if (at > 0 && /\S/.test(text[at-1])) { i = at+1; continue; }
-      let j = at + 1;
-      while (j < text.length && /[^\s.,!?;:(){}[\]"'<>]/.test(text[j])) j++;
-      if (text.slice(at+1, j).toLowerCase() === name) return true;
-      i = j;
-    }
-    return false;
+    let i=0; while(i<text.length){
+      const at = text.indexOf('@', i); if (at===-1) return false;
+      if (at>0 && /\S/.test(text[at-1])) { i=at+1; continue; }
+      let j=at+1; while(j<text.length && /[^\s.,!?;:(){}[\]"'<>]/.test(text[j])) j++;
+      if (text.slice(at+1,j).toLowerCase()===name) return true;
+      i=j;
+    } return false;
   }
 
   function addMsg(type, text, from){
-    const row = document.createElement('div'); row.className = 'msg ' + type;
-    const box = document.createElement('div'); box.className = 'bubble';
-    if (from && type!=='me') {
-      const tag = document.createElement('span'); tag.className='tag'; tag.textContent = from;
-      box.appendChild(tag);
-    }
+    const row = document.createElement('div'); row.className='msg '+type;
+    const box = document.createElement('div'); box.className='bubble';
+    if (from && type!=='me'){ const tag=document.createElement('span'); tag.className='tag'; tag.textContent=from; box.appendChild(tag); }
     if (type!=='me' && containsMentionForMe(text)) box.classList.add('mention-full');
     box.appendChild(document.createTextNode(text));
-    row.appendChild(box);
-    logEl.appendChild(row);
-    logEl.scrollTop = logEl.scrollHeight;
+    row.appendChild(box); logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
   }
-
-  function sendHello(name){ ws.send(JSON.stringify({ type:'hello', nickname: name })); }
-
-  ws.addEventListener('message', ev=>{
-    const m = JSON.parse(ev.data);
-    if (m.type==='system') addMsg('sys', m.text);
-    else if (m.type==='chat') {
-      if (m.from === nickname) return;
-      addMsg('other', m.text, m.from);
-    } else if (m.type==='roster') {
-      renderParticipants(m.members || []);
-    }
-  });
-
-  ws.addEventListener('close', ()=> addMsg('sys','connection closed'));
-  ws.addEventListener('error', ()=> addMsg('sys','socket error'));
 
   function sendChat(){
-    if (ws.readyState!==1) return;
+    if (!ws || ws.readyState!==1) return;
     const t = textEl.value.trim(); if(!t) return;
     ws.send(JSON.stringify({ type:'chat', text:t }));
-    addMsg('me', t, 'me');
-    textEl.value=''; closeMention(); textEl.focus();
+    addMsg('me', t, 'me'); textEl.value=''; closeMention(); textEl.focus();
   }
-
   sendEl.onclick = sendChat;
 
+  // mention UI
   textEl.addEventListener('keydown', e=>{
     if (isDropdownOpen()) {
       if (e.key==='ArrowDown'){ e.preventDefault(); moveMention(1); return; }
@@ -226,77 +180,51 @@
     }
     if (e.key==='Enter'){ e.preventDefault(); sendChat(); }
   });
-
   textEl.addEventListener('input', onInputForMention);
   textEl.addEventListener('click', onInputForMention);
 
-  function isDropdownOpen(){ return mbox.style.display === 'block'; }
+  function isDropdownOpen(){ return mbox.style.display==='block'; }
   function getMentionContext(){
-    const pos = textEl.selectionStart;
-    const s = textEl.value.slice(0,pos);
-    const at = s.lastIndexOf('@');
-    if (at === -1) return null;
+    const pos = textEl.selectionStart; const s = textEl.value.slice(0,pos);
+    const at = s.lastIndexOf('@'); if (at===-1) return null;
     if (at>0 && /\S/.test(s[at-1])) return null;
-    const partial = s.slice(at+1);
-    if (partial.length===0) return {start:at, q:""};
-    if (/\s/.test(partial)) return null;
-    return {start:at, q:partial};
+    const partial = s.slice(at+1); if (partial.length===0) return {start:at, q:""};
+    if (/\s/.test(partial)) return null; return {start:at, q:partial};
   }
   function onInputForMention(){
-    const ctx = getMentionContext();
-    if (!ctx) { closeMention(); return; }
+    const ctx = getMentionContext(); if (!ctx){ closeMention(); return; }
     const q = ctx.q.toLowerCase();
-    const list = members.filter(n => n !== nickname && n.toLowerCase().startsWith(q)).slice(0,8);
-    if (list.length===0) { closeMention(); return; }
+    const list = members.filter(n=>n!==nickname && n.toLowerCase().startsWith(q)).slice(0,8);
+    if (!list.length){ closeMention(); return; }
     mStart = ctx.start; renderMentionBox(list);
   }
   function renderMentionBox(list){
-    mbox.innerHTML = "";
-    list.forEach((n,i)=>{
-      const div = document.createElement('div');
-      div.className = 'mitem' + (i===0?' active':'');
-      div.textContent = n;
-      div.onclick = ()=> insertMention(n);
-      mbox.appendChild(div);
-    });
-    mActive = 0;
-    mbox.style.display = 'block';
+    mbox.innerHTML=""; list.forEach((n,i)=>{ const d=document.createElement('div'); d.className='mitem'+(i===0?' active':''); d.textContent=n; d.onclick=()=>insertMention(n); mbox.appendChild(d); });
+    mActive=0; mbox.style.display='block';
   }
   function moveMention(d){
-    const items = [...mbox.querySelectorAll('.mitem')];
-    if (!items.length) return;
-    items[mActive].classList.remove('active');
-    mActive = (mActive + d + items.length) % items.length;
-    items[mActive].classList.add('active');
-    items[mActive].scrollIntoView({block:'nearest'});
+    const items=[...mbox.querySelectorAll('.mitem')]; if(!items.length) return;
+    items[mActive].classList.remove('active'); mActive=(mActive+d+items.length)%items.length; items[mActive].classList.add('active'); items[mActive].scrollIntoView({block:'nearest'});
   }
   function pickMention(){
-    const items = [...mbox.querySelectorAll('.mitem')];
-    if (!items.length) return;
+    const items=[...mbox.querySelectorAll('.mitem')]; if(!items.length) return;
     insertMention(items[mActive].textContent);
   }
   function insertMention(name){
-    if (mStart==null) return;
-    const pos = textEl.selectionStart;
-    const before = textEl.value.slice(0, mStart);
-    const after  = textEl.value.slice(pos);
-    textEl.value = before + '@' + name + ' ' + after;
-    const caret = (before + '@' + name + ' ').length;
-    textEl.setSelectionRange(caret, caret);
-    closeMention();
+    if (mStart==null) return; const pos=textEl.selectionStart; const before=textEl.value.slice(0,mStart); const after=textEl.value.slice(pos);
+    textEl.value = before+'@'+name+' '+after; const caret=(before+'@'+name+' ').length; textEl.setSelectionRange(caret, caret); closeMention(); textEl.focus();
   }
   function closeMention(){ mbox.style.display='none'; mbox.innerHTML=""; mActive=-1; mStart=null; }
 
+  // join flow
   function submitName(){
-    const n = nameInput.value.trim().slice(0,32);
-    if (!n) return;
-    nickname = n;
-    modal.style.display = 'none';
-    if (ws.readyState===1) sendHello(nickname);
-    else ws.addEventListener('open', ()=> sendHello(nickname), { once:true });
+    const n = nameInput.value.trim().slice(0,32); if(!n) return;
+    nickname = n; groupCode = groupInput.value.trim().slice(0,32);
+    modal.style.display='none'; openSocket();
   }
   joinBtn.onclick = submitName;
   nameInput.addEventListener('keydown', e=>{ if(e.key==='Enter') submitName(); });
+  groupInput.addEventListener('keydown', e=>{ if(e.key==='Enter') submitName(); });
 </script>
 </body>
 </html>
